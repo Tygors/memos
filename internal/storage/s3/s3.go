@@ -111,30 +111,57 @@ func (c *Client) PresignGetObject(ctx context.Context, key string) (string, erro
 }
 
 func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
-	output, err := c.Client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: c.Bucket,
-		Key:    aws.String(key),
-	})
+	url, err := c.PresignGetObject(ctx, key)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to download object")
+		return nil, errors.Wrap(err, "failed to presign get object")
 	}
-	defer output.Body.Close()
-	data, err := io.ReadAll(output.Body)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to read object body")
+		return nil, errors.Wrap(err, "failed to create request")
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to send request")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, errors.Errorf("download failed: %d %s", resp.StatusCode, string(body))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read body")
 	}
 	return data, nil
 }
 
 func (c *Client) GetObjectStream(ctx context.Context, key string) (io.ReadCloser, error) {
-	output, err := c.Client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: c.Bucket,
-		Key:    aws.String(key),
-	})
+	url, err := c.PresignGetObject(ctx, key)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get object")
+		return nil, errors.Wrap(err, "failed to presign get object")
 	}
-	return output.Body, nil
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create request")
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to send request")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, errors.Errorf("download failed: %d %s", resp.StatusCode, string(body))
+	}
+
+	return resp.Body, nil
 }
 
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
