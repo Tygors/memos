@@ -36,13 +36,18 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 		loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
 	}
 
+	loadOptions = append(loadOptions, config.WithEndpointResolver(aws.EndpointResolverFunc(
+		func(service, region string) (aws.Endpoint, error) {
+			return aws.Endpoint{URL: s3Config.Endpoint}, nil
+		},
+	)))
+
 	cfg, err := config.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load s3 config")
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(s3Config.Endpoint)
 		o.UsePathStyle = s3Config.UsePathStyle
 	})
 	return &Client{
