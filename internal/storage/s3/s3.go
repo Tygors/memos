@@ -27,20 +27,12 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(s3Config.AccessKeyId, s3Config.AccessKeySecret, "")),
 		config.WithRegion(s3Config.Region),
 	}
-	loadOptions = append(loadOptions, config.WithEndpointResolver(aws.EndpointResolverFunc(
-		func(service, region string) (aws.Endpoint, error) {
-			return aws.Endpoint{URL: s3Config.Endpoint, Source: aws.EndpointSourceCustom, HostnameImmutable: true}, nil
-		},
-	)))
-
-	// Force HTTP/1.1 for Cloudflare tunnel compatibility
-	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
-		tr.ForceAttemptHTTP2 = false
-		if s3Config.InsecureSkipTlsVerify {
+	if s3Config.InsecureSkipTlsVerify {
+		httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
 			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
-	})
-	loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
+		})
+		loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
+	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
@@ -48,7 +40,10 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(s3Config.Endpoint)
 		o.UsePathStyle = s3Config.UsePathStyle
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 	return &Client{
 		Client: client,
@@ -56,7 +51,6 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 	}, nil
 }
 
-// UploadObject uploads an object to S3.
 func (c *Client) UploadObject(ctx context.Context, key string, fileType string, content io.Reader) (string, error) {
 	putInput := s3.PutObjectInput{
 		Bucket:      c.Bucket,
@@ -70,15 +64,12 @@ func (c *Client) UploadObject(ctx context.Context, key string, fileType string, 
 	return key, nil
 }
 
-// PresignGetObject presigns an object in S3.
 func (c *Client) PresignGetObject(ctx context.Context, key string) (string, error) {
 	presignClient := s3.NewPresignClient(c.Client)
 	presignResult, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(*c.Bucket),
 		Key:    aws.String(key),
 	}, func(opts *s3.PresignOptions) {
-		// Set the expiration time of the presigned URL to 5 days.
-		// Reference: https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
 		opts.Expires = time.Duration(5 * 24 * time.Hour)
 	})
 	if err != nil {
@@ -87,7 +78,6 @@ func (c *Client) PresignGetObject(ctx context.Context, key string) (string, erro
 	return presignResult.URL, nil
 }
 
-// GetObject retrieves an object from S3.
 func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
 	output, err := c.Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: c.Bucket,
@@ -104,7 +94,6 @@ func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
-// GetObjectStream retrieves an object from S3 as a stream.
 func (c *Client) GetObjectStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	output, err := c.Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: c.Bucket,
@@ -116,7 +105,6 @@ func (c *Client) GetObjectStream(ctx context.Context, key string) (io.ReadCloser
 	return output.Body, nil
 }
 
-// DeleteObject deletes an object in S3.
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
 	_, err := c.Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: c.Bucket,
