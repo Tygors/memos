@@ -82,7 +82,7 @@ func (c *Client) UploadObject(ctx context.Context, key string, fileType string, 
 	if err != nil {
 		return "", errors.Wrap(err, "failed to retrieve credentials")
 	}
-	if _, err := c.signer.SignHTTP(ctx, awsCreds, req, "UNSIGNED-PAYLOAD", "s3", c.region, time.Now()); err != nil {
+	if err := c.signer.SignHTTP(ctx, awsCreds, req, "UNSIGNED-PAYLOAD", "s3", c.region, time.Now()); err != nil {
 		return "", errors.Wrap(err, "failed to sign request")
 	}
 
