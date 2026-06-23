@@ -27,12 +27,17 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(s3Config.AccessKeyId, s3Config.AccessKeySecret, "")),
 		config.WithRegion(s3Config.Region),
 	}
-	if s3Config.InsecureSkipTlsVerify {
-		httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+
+	// Custom HTTP transport: disable HTTP/2 for better compatibility
+	// with S3-compatible storage (MinIO, etc.), and optionally skip
+	// TLS verification for self-signed certificates.
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+		tr.ForceAttemptHTTP2 = false
+		if s3Config.InsecureSkipTlsVerify {
 			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		})
-		loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
-	}
+		}
+	})
+	loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
 
 	cfg, err := config.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
@@ -42,6 +47,7 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(s3Config.Endpoint)
 		o.UsePathStyle = s3Config.UsePathStyle
+		o.ContentSHA256 = aws.String("UNSIGNED-PAYLOAD")
 	})
 	return &Client{
 		Client: client,
