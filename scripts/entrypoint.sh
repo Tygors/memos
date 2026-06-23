@@ -46,14 +46,18 @@ file_env "MEMOS_DSN"
 # Only runs when using SQLite (default) and MinIO credentials are configured
 if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACCESS_KEY" ] && [ -n "$MINIO_SECRET_KEY" ]; then
     BACKUP_BUCKET="${MINIO_BACKUP_BUCKET:-memos-backup}"
-    mc alias set memos-backup "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1
+    if mc alias set memos-backup "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1; then
+        echo "MinIO backup alias configured successfully for bucket: $BACKUP_BUCKET"
+    else
+        echo "WARNING: Failed to configure MinIO backup alias at $MINIO_ENDPOINT" >&2
+    fi
 
     # Restore latest backup if no local database exists
     if [ ! -f "$DATA_DIR/memos.db" ]; then
         latest=$(mc ls "memos-backup/$BACKUP_BUCKET/" 2>/dev/null | sort -r | head -1 | awk '{print $NF}')
         if [ -n "$latest" ]; then
             echo "Restoring from backup: $latest"
-            mc cp "memos-backup/$BACKUP_BUCKET/$latest" "$DATA_DIR/memos.db" >/dev/null 2>&1
+            mc cp "memos-backup/$BACKUP_BUCKET/$latest" "$DATA_DIR/memos.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
         fi
     fi
 
@@ -61,7 +65,8 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
     (
         while true; do
             sleep "${MINIO_BACKUP_INTERVAL:-720}"
-            mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1
+            echo "Running scheduled MinIO backup..."
+            mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1 && echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
         done
     ) &
 
@@ -73,7 +78,8 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
             sleep 60
             if [ -f "$TRIGGER_FILE" ]; then
                 rm -f "$TRIGGER_FILE"
-                mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1
+                echo "Triggered MinIO backup (new memo)..."
+                mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1 && echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
             fi
         done
     ) &
