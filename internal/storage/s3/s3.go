@@ -38,7 +38,7 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 
 	loadOptions = append(loadOptions, config.WithEndpointResolver(aws.EndpointResolverFunc(
 		func(service, region string) (aws.Endpoint, error) {
-			return aws.Endpoint{URL: s3Config.Endpoint}, nil
+			return aws.Endpoint{URL: s3Config.Endpoint, Source: aws.EndpointSourceCustom, HostnameImmutable: true}, nil
 		},
 	)))
 
