@@ -27,20 +27,20 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(s3Config.AccessKeyId, s3Config.AccessKeySecret, "")),
 		config.WithRegion(s3Config.Region),
 	}
-	if s3Config.InsecureSkipTlsVerify {
-		// Skip TLS certificate verification for endpoints using self-signed certificates.
-		// This is opt-in and removes protection against man-in-the-middle attacks.
-		httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
-			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- opt-in for self-signed S3 endpoints
-		})
-		loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
-	}
-
 	loadOptions = append(loadOptions, config.WithEndpointResolver(aws.EndpointResolverFunc(
 		func(service, region string) (aws.Endpoint, error) {
 			return aws.Endpoint{URL: s3Config.Endpoint, Source: aws.EndpointSourceCustom, HostnameImmutable: true}, nil
 		},
 	)))
+
+	// Force HTTP/1.1 for Cloudflare tunnel compatibility
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
+		tr.ForceAttemptHTTP2 = false
+		if s3Config.InsecureSkipTlsVerify {
+			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+	})
+	loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
 
 	cfg, err := config.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
