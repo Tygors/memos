@@ -53,10 +53,10 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
     fi
 
     # Restore backup if no local database exists
-    if [ ! -f "$DATA_DIR/memos.db" ]; then
-        if mc stat "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1; then
-            echo "Restoring from backup: memos.db"
-            mc cp "memos-backup/$BACKUP_BUCKET/memos.db" "$DATA_DIR/memos.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
+    if [ ! -f "$DATA_DIR/memos_prod.db" ]; then
+        if mc stat "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1; then
+            echo "Restoring from backup: memos_prod.db"
+            mc cp "memos-backup/$BACKUP_BUCKET/memos_prod.db" "$DATA_DIR/memos_prod.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
         fi
     fi
 
@@ -65,7 +65,7 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
         while true; do
             sleep "${MINIO_BACKUP_INTERVAL:-720}"
             echo "Running scheduled MinIO backup..."
-            mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1 && echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
+            mc cp "$DATA_DIR/memos_prod.db" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
         done
     ) &
 
@@ -78,7 +78,7 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
             if [ -f "$TRIGGER_FILE" ]; then
                 rm -f "$TRIGGER_FILE"
                 echo "Triggered MinIO backup (new memo)..."
-                mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1 && echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
+                mc cp "$DATA_DIR/memos_prod.db" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
             fi
         done
     ) &
