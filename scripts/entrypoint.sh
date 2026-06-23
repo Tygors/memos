@@ -57,16 +57,11 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
         fi
     fi
 
-    # Background backup loop (default: every 3600 seconds = 1 hour)
+    # Background backup loop (default: every 720 seconds = 12 minutes)
     (
         while true; do
-            sleep "${MINIO_BACKUP_INTERVAL:-3600}"
-            ts=$(date +%Y%m%d%H%M)
-            mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos-${ts}.db" >/dev/null 2>&1
-            # Keep only the latest 168 backups (7 days at hourly)
-            mc ls "memos-backup/$BACKUP_BUCKET/" 2>/dev/null | sort -r | tail -n +169 | awk '{print $NF}' | while read -r f; do
-                mc rm "memos-backup/$BACKUP_BUCKET/$f" >/dev/null 2>&1
-            done
+            sleep "${MINIO_BACKUP_INTERVAL:-720}"
+            mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1
         done
     ) &
 fi
