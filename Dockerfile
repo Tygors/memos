@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       ./cmd/memos
 
 FROM alpine:3.21 AS monolithic
-RUN apk add --no-cache tzdata ca-certificates su-exec curl && \
+RUN apk add --no-cache tzdata ca-certificates su-exec curl sqlite && \
     curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && \
     chmod +x /usr/local/bin/mc && \
     addgroup -g 10001 -S nonroot && \

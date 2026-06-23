@@ -65,7 +65,10 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
         while true; do
             sleep "${MINIO_BACKUP_INTERVAL:-720}"
             echo "Running scheduled MinIO backup..."
-            mc cp "$DATA_DIR/memos_prod.db" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
+            sqlite3 "$DATA_DIR/memos_prod.db" ".backup $DATA_DIR/.backup_tmp" && \
+            mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && \
+            rm -f "$DATA_DIR/.backup_tmp" && \
+            echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
         done
     ) &
 
@@ -78,7 +81,10 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
             if [ -f "$TRIGGER_FILE" ]; then
                 rm -f "$TRIGGER_FILE"
                 echo "Triggered MinIO backup (new memo)..."
-                mc cp "$DATA_DIR/memos_prod.db" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
+                sqlite3 "$DATA_DIR/memos_prod.db" ".backup $DATA_DIR/.backup_tmp" && \
+                mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && \
+                rm -f "$DATA_DIR/.backup_tmp" && \
+                echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
             fi
         done
     ) &
