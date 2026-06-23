@@ -76,7 +76,6 @@ func (c *Client) UploadObject(ctx context.Context, key string, fileType string, 
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create request")
 	}
-	req.Header.Set("Content-Type", fileType)
 
 	awsCreds, err := c.creds.Retrieve(ctx)
 	if err != nil {
@@ -85,6 +84,10 @@ func (c *Client) UploadObject(ctx context.Context, key string, fileType string, 
 	if err := c.signer.SignHTTP(ctx, awsCreds, req, "UNSIGNED-PAYLOAD", "s3", c.region, time.Now()); err != nil {
 		return "", errors.Wrap(err, "failed to sign request")
 	}
+	// Set Content-Type after signing so it is not included in the
+	// SigV4 signed headers. MinIO's canonical request verification
+	// does not expect content-type in the signed headers.
+	req.Header.Set("Content-Type", fileType)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
