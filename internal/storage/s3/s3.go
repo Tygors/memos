@@ -45,11 +45,13 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 		o.BaseEndpoint = aws.String(s3Config.Endpoint)
 		o.UsePathStyle = s3Config.UsePathStyle
 		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-			return stack.Build.Add(middleware.BuildMiddlewareFunc("StripChecksum",
+			return stack.Build.Add(middleware.BuildMiddlewareFunc("CleanSDKHeaders",
 				func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler,
 				) (middleware.BuildOutput, middleware.Metadata, error) {
 					if req, ok := in.Request.(*smithyhttp.Request); ok {
 						req.Header.Del("X-Amz-Checksum-Crc32")
+						req.Header.Del("Amz-Sdk-Invocation-Id")
+						req.Header.Del("Amz-Sdk-Request")
 					}
 					return next.HandleBuild(ctx, in)
 				},
