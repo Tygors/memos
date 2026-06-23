@@ -3,25 +3,30 @@ package s3
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
 
 	storepb "github.com/usememos/memos/proto/gen/store"
 )
 
 type Client struct {
-	Client *s3.Client
-	Bucket *string
+	Client   *s3.Client
+	Bucket   *string
+	signer   *v4.Signer
+	creds    aws.CredentialsProvider
+	region   string
+	endpoint string
 }
 
 func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client, error) {
@@ -49,43 +54,47 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(s3Config.Endpoint)
 		o.UsePathStyle = s3Config.UsePathStyle
-
-		// Inject a build-phase middleware that sets x-amz-content-sha256
-		// to "UNSIGNED-PAYLOAD".  This runs before SigV4 signing so the
-		// header value is included in the canonical request.  Required by
-		// MinIO and other S3-compatible stores that do not accept a
-		// computed payload hash over plain HTTP.
-		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-			return stack.Build.Add(
-				middleware.BuildMiddlewareFunc("UnsignedPayload", func(
-					ctx context.Context,
-					in middleware.BuildInput,
-					next middleware.BuildHandler,
-				) (middleware.BuildOutput, middleware.Metadata, error) {
-					if req, ok := in.Request.(*smithyhttp.Request); ok {
-						req.Header.Set("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
-					}
-					return next.HandleBuild(ctx, in)
-				}),
-				middleware.Before,
-			)
-		})
 	})
 	return &Client{
-		Client: client,
-		Bucket: aws.String(s3Config.Bucket),
+		Client:   client,
+		Bucket:   aws.String(s3Config.Bucket),
+		signer:   v4.NewSigner(),
+		creds:    credentials.NewStaticCredentialsProvider(s3Config.AccessKeyId, s3Config.AccessKeySecret, ""),
+		region:   s3Config.Region,
+		endpoint: s3Config.Endpoint,
 	}, nil
 }
 
+// UploadObject uploads content to S3 using a directly-signed HTTP PUT request.
+// It bypasses the SDK's S3 client middleware chain so it can set
+// x-amz-content-sha256 to "UNSIGNED-PAYLOAD" before signing, which is required
+// by MinIO and other S3-compatible stores.
 func (c *Client) UploadObject(ctx context.Context, key string, fileType string, content io.Reader) (string, error) {
-	putInput := s3.PutObjectInput{
-		Bucket:      c.Bucket,
-		Key:         aws.String(key),
-		ContentType: aws.String(fileType),
-		Body:        content,
+	url := fmt.Sprintf("%s/%s/%s", strings.TrimRight(c.endpoint, "/"), *c.Bucket, key)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, content)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create request")
 	}
-	if _, err := c.Client.PutObject(ctx, &putInput); err != nil {
-		return "", err
+	req.Header.Set("Content-Type", fileType)
+
+	awsCreds, err := c.creds.Retrieve(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to retrieve credentials")
+	}
+	if _, err := c.signer.SignHTTP(ctx, awsCreds, req, "UNSIGNED-PAYLOAD", "s3", c.region, time.Now()); err != nil {
+		return "", errors.Wrap(err, "failed to sign request")
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to send request")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", errors.Errorf("upload failed: %d %s", resp.StatusCode, string(body))
 	}
 	return key, nil
 }
