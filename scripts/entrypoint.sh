@@ -64,6 +64,19 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
             mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1
         done
     ) &
+
+    # Watch for the on-demand backup trigger written by the Go server
+    # when a new memo is created.  Poll every 60 seconds.
+    TRIGGER_FILE="/tmp/memos-backup-trigger"
+    (
+        while true; do
+            sleep 60
+            if [ -f "$TRIGGER_FILE" ]; then
+                rm -f "$TRIGGER_FILE"
+                mc cp "$DATA_DIR/memos.db" "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1
+            fi
+        done
+    ) &
 fi
 
 exec "$@"

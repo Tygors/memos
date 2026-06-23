@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -125,6 +126,12 @@ func (s *APIV1Service) CreateMemo(ctx context.Context, request *v1pb.CreateMemoR
 			return nil, status.Errorf(codes.AlreadyExists, "memo with ID %q already exists", memoUID)
 		}
 		return nil, err
+	}
+
+	// Signal the backup loop in entrypoint.sh that a new memo has been
+	// created so it can upload the SQLite database ahead of schedule.
+	if err := os.WriteFile("/tmp/memos-backup-trigger", []byte(time.Now().UTC().Format(time.RFC3339)), 0644); err != nil {
+		slog.Warn("failed to write backup trigger", "error", err)
 	}
 
 	attachments := []*store.Attachment{}
