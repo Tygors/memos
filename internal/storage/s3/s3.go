@@ -1,16 +1,14 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -21,12 +19,8 @@ import (
 )
 
 type Client struct {
-	Client   *s3.Client
-	Bucket   *string
-	signer   *v4.Signer
-	creds    aws.CredentialsProvider
-	region   string
-	endpoint string
+	Client *s3.Client
+	Bucket *string
 }
 
 func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client, error) {
@@ -56,37 +50,37 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 		o.UsePathStyle = s3Config.UsePathStyle
 	})
 	return &Client{
-		Client:   client,
-		Bucket:   aws.String(s3Config.Bucket),
-		signer:   v4.NewSigner(),
-		creds:    credentials.NewStaticCredentialsProvider(s3Config.AccessKeyId, s3Config.AccessKeySecret, ""),
-		region:   s3Config.Region,
-		endpoint: s3Config.Endpoint,
+		Client: client,
+		Bucket: aws.String(s3Config.Bucket),
 	}, nil
 }
 
-// UploadObject uploads content to S3 using a directly-signed HTTP PUT request.
-// It bypasses the SDK's S3 client middleware chain so it can set
-// x-amz-content-sha256 to "UNSIGNED-PAYLOAD" before signing, which is required
-// by MinIO and other S3-compatible stores.
+// UploadObject uploads content to S3 using a presigned PUT URL.  The
+// presigned URL includes the signature in query parameters, so the actual
+// HTTP PUT does not need SigV4 signing and MinIO's content-SHA256
+// constraint does not apply.
 func (c *Client) UploadObject(ctx context.Context, key string, fileType string, content io.Reader) (string, error) {
-	url := fmt.Sprintf("%s/%s/%s", strings.TrimRight(c.endpoint, "/"), *c.Bucket, key)
+	presignClient := s3.NewPresignClient(c.Client)
+	presignResult, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket:      c.Bucket,
+		Key:         aws.String(key),
+		ContentType: aws.String(fileType),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 15 * time.Minute
+	})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to presign put object")
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, content)
+	body, err := io.ReadAll(content)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to read content")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, presignResult.URL, bytes.NewReader(body))
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create request")
 	}
-
-	awsCreds, err := c.creds.Retrieve(ctx)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to retrieve credentials")
-	}
-	if err := c.signer.SignHTTP(ctx, awsCreds, req, "UNSIGNED-PAYLOAD", "s3", c.region, time.Now()); err != nil {
-		return "", errors.Wrap(err, "failed to sign request")
-	}
-	// Set Content-Type after signing so it is not included in the
-	// SigV4 signed headers. MinIO's canonical request verification
-	// does not expect content-type in the signed headers.
 	req.Header.Set("Content-Type", fileType)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -96,8 +90,8 @@ func (c *Client) UploadObject(ctx context.Context, key string, fileType string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return "", errors.Errorf("upload failed: %d %s", resp.StatusCode, string(body))
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", errors.Errorf("upload failed: %d %s", resp.StatusCode, string(respBody))
 	}
 	return key, nil
 }
