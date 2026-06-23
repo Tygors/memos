@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
 
 	storepb "github.com/usememos/memos/proto/gen/store"
@@ -47,7 +49,27 @@ func NewClient(ctx context.Context, s3Config *storepb.StorageS3Config) (*Client,
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(s3Config.Endpoint)
 		o.UsePathStyle = s3Config.UsePathStyle
-		o.ContentSHA256 = aws.String("UNSIGNED-PAYLOAD")
+
+		// Inject a build-phase middleware that sets x-amz-content-sha256
+		// to "UNSIGNED-PAYLOAD".  This runs before SigV4 signing so the
+		// header value is included in the canonical request.  Required by
+		// MinIO and other S3-compatible stores that do not accept a
+		// computed payload hash over plain HTTP.
+		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+			return stack.Build.Add(
+				middleware.BuildMiddlewareFunc("UnsignedPayload", func(
+					ctx context.Context,
+					in middleware.BuildInput,
+					next middleware.BuildHandler,
+				) (middleware.BuildOutput, middleware.Metadata, error) {
+					if req, ok := in.Request.(*smithyhttp.Request); ok {
+						req.Header.Set("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+					}
+					return next.HandleBuild(ctx, in)
+				}),
+				middleware.Before,
+			)
+		})
 	})
 	return &Client{
 		Client: client,
