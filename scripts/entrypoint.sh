@@ -52,12 +52,11 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
         echo "WARNING: Failed to configure MinIO backup alias at $MINIO_ENDPOINT" >&2
     fi
 
-    # Restore latest backup if no local database exists
+    # Restore backup if no local database exists
     if [ ! -f "$DATA_DIR/memos.db" ]; then
-        latest=$(mc ls "memos-backup/$BACKUP_BUCKET/" 2>/dev/null | sort -r | head -1 | awk '{print $NF}')
-        if [ -n "$latest" ]; then
-            echo "Restoring from backup: $latest"
-            mc cp "memos-backup/$BACKUP_BUCKET/$latest" "$DATA_DIR/memos.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
+        if mc stat "memos-backup/$BACKUP_BUCKET/memos.db" >/dev/null 2>&1; then
+            echo "Restoring from backup: memos.db"
+            mc cp "memos-backup/$BACKUP_BUCKET/memos.db" "$DATA_DIR/memos.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
         fi
     fi
 
