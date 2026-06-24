@@ -42,6 +42,12 @@ file_env() {
 
 file_env "MEMOS_DSN"
 
+do_backup() {
+    sqlite3 "$DATA_DIR/memos_prod.db" ".backup $DATA_DIR/.backup_tmp" && \
+    mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && \
+    rm -f "$DATA_DIR/.backup_tmp"
+}
+
 # MinIO backup/restore for SQLite persistence
 # Only runs when using SQLite (default) and MinIO credentials are configured
 if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACCESS_KEY" ] && [ -n "$MINIO_SECRET_KEY" ]; then
@@ -60,34 +66,33 @@ if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACC
         fi
     fi
 
-    # Background backup loop (default: every 720 seconds = 12 minutes)
+    # Scheduled backup (default: every 720 seconds = 12 minutes)
     (
         while true; do
             sleep "${MINIO_BACKUP_INTERVAL:-720}"
-            echo "Running scheduled MinIO backup..."
-            sqlite3 "$DATA_DIR/memos_prod.db" ".backup $DATA_DIR/.backup_tmp" && \
-            mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && \
-            rm -f "$DATA_DIR/.backup_tmp" && \
-            echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
+            echo "Running scheduled backup..."
+            do_backup && echo "Scheduled backup complete" || echo "WARNING: scheduled backup failed" >&2
         done
     ) &
 
-    # Watch for the on-demand backup trigger written by the Go server
-    # when a new memo is created.  Poll every 60 seconds.
+    # Triggered backup (poll every 60s)
     TRIGGER_FILE="/tmp/memos-backup-trigger"
     (
         while true; do
             sleep 60
             if [ -f "$TRIGGER_FILE" ]; then
                 rm -f "$TRIGGER_FILE"
-                echo "Triggered MinIO backup (new memo)..."
-                sqlite3 "$DATA_DIR/memos_prod.db" ".backup $DATA_DIR/.backup_tmp" && \
-                mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && \
-                rm -f "$DATA_DIR/.backup_tmp" && \
-                echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
+                echo "Triggered backup..."
+                do_backup && echo "Triggered backup complete" || echo "WARNING: triggered backup failed" >&2
             fi
         done
     ) &
 fi
 
-exec "$@"
+# Run memos in background so we can trap shutdown signals
+"$@" &
+MEMOS_PID=$!
+
+trap 'echo "Shutting down, running final backup..."; do_backup; echo "Final backup complete"; kill $MEMOS_PID 2>/dev/null; exit 0' TERM INT
+
+wait $MEMOS_PID
