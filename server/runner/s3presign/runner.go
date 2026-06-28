@@ -3,6 +3,7 @@ package s3presign
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -45,6 +46,10 @@ func (r *Runner) RunOnce(ctx context.Context) {
 }
 
 func (r *Runner) CheckAndPresign(ctx context.Context) {
+	if os.Getenv("S3_PUBLIC_URL") != "" {
+		return
+	}
+
 	instanceStorageSetting, err := r.Store.GetInstanceStorageSetting(ctx)
 	if err != nil {
 		return

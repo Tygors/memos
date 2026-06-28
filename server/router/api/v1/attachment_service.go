@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -495,16 +496,25 @@ func SaveAttachmentBlob(ctx context.Context, profile *profile.Profile, stores *s
 			filepathTemplate = filepath.Join(filepathTemplate, "{filename}")
 		}
 		filepathTemplate = replaceFilenameWithPathTemplate(filepathTemplate, create.Filename)
+		publicURL := os.Getenv("S3_PUBLIC_URL")
+		if publicURL != "" {
+			if u, err := url.Parse(publicURL); err == nil && u.Path != "" && u.Path != "/" {
+				filepathTemplate = strings.TrimLeft(u.Path, "/") + "/" + filepathTemplate
+			}
+		}
 		key, err := s3Client.UploadObject(ctx, filepathTemplate, create.Type, bytes.NewReader(create.Blob))
 		if err != nil {
 			return errors.Wrap(err, "Failed to upload via s3 client")
 		}
-		presignURL, err := s3Client.PresignGetObject(ctx, key)
-		if err != nil {
-			return errors.Wrap(err, "Failed to presign via s3 client")
+		if publicURL != "" {
+			create.Reference = strings.TrimRight(publicURL, "/") + "/" + key
+		} else {
+			presignURL, err := s3Client.PresignGetObject(ctx, key)
+			if err != nil {
+				return errors.Wrap(err, "Failed to presign via s3 client")
+			}
+			create.Reference = presignURL
 		}
-
-		create.Reference = presignURL
 		create.Blob = nil
 		create.StorageType = storepb.AttachmentStorageType_S3
 		payload := ensureAttachmentPayload(create.Payload)

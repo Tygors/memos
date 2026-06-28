@@ -17,6 +17,9 @@ memos
 # Docker Compose Environment File
 .env
 
+# Local dev secrets
+.dev.vars
+
 dist
 
 # VSCode settings

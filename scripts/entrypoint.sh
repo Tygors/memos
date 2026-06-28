@@ -43,26 +43,37 @@ file_env() {
 file_env "MEMOS_DSN"
 
 do_backup() {
+    BACKUP_PATH="${BACKUP_BUCKET}${S3_PUBLIC_URL:+/memos-backup}"
     sqlite3 "$DATA_DIR/memos_prod.db" ".backup $DATA_DIR/.backup_tmp" && \
-    mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1 && \
+    mc cp "$DATA_DIR/.backup_tmp" "memos-backup/$BACKUP_PATH/memos_prod.db" >/dev/null 2>&1 && \
     rm -f "$DATA_DIR/.backup_tmp"
 }
 
-# MinIO backup/restore for SQLite persistence
-# Only runs when using SQLite (default) and MinIO credentials are configured
+# MinIO / B2 backup for SQLite persistence
+# Only runs when using SQLite (default) and S3 credentials are configured
+#
+# MinIO mode (S3_PUBLIC_URL not set):
+#   MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY point to MinIO
+#   MINIO_BACKUP_BUCKET defaults to "memos-backup"
+#   backup stored as: <bucket>/memos_prod.db
+#
+# B2 mode (S3_PUBLIC_URL set):
+#   Same MINIO_* vars hold B2 credentials instead (just change the values)
+#   backup stored as: <bucket>/memos-backup/memos_prod.db
 if command -v mc >/dev/null 2>&1 && [ -n "$MINIO_ENDPOINT" ] && [ -n "$MINIO_ACCESS_KEY" ] && [ -n "$MINIO_SECRET_KEY" ]; then
     BACKUP_BUCKET="${MINIO_BACKUP_BUCKET:-memos-backup}"
     if mc alias set memos-backup "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1; then
-        echo "MinIO backup alias configured successfully for bucket: $BACKUP_BUCKET"
+        echo "Backup alias configured successfully for bucket: $BACKUP_BUCKET"
     else
-        echo "WARNING: Failed to configure MinIO backup alias at $MINIO_ENDPOINT" >&2
+        echo "WARNING: Failed to configure backup alias at $MINIO_ENDPOINT" >&2
     fi
 
     # Restore backup if no local database exists
+    BACKUP_PATH="${BACKUP_BUCKET}${S3_PUBLIC_URL:+/memos-backup}"
     if [ ! -f "$DATA_DIR/memos_prod.db" ]; then
-        if mc stat "memos-backup/$BACKUP_BUCKET/memos_prod.db" >/dev/null 2>&1; then
+        if mc stat "memos-backup/$BACKUP_PATH/memos_prod.db" >/dev/null 2>&1; then
             echo "Restoring from backup: memos_prod.db"
-            mc cp "memos-backup/$BACKUP_BUCKET/memos_prod.db" "$DATA_DIR/memos_prod.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
+            mc cp "memos-backup/$BACKUP_PATH/memos_prod.db" "$DATA_DIR/memos_prod.db" >/dev/null 2>&1 || echo "WARNING: failed to restore from backup" >&2
         fi
     fi
 
